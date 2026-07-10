@@ -6,6 +6,7 @@ import { useState, useEffect } from "react";
 export default function Home() {
   const { data: session, status } = useSession();
   const [playlistName, setPlaylistName] = useState("");
+  const [uploadMethod, setUploadMethod] = useState("file"); // "file" or "url"
   const [m3uUrl, setM3uUrl] = useState("");
   const [file, setFile] = useState(null);
   const [dragActive, setDragActive] = useState(false);
@@ -65,27 +66,44 @@ export default function Home() {
     }
   };
 
-  const handleUrlSubmit = async (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!playlistName.trim()) {
       setErrorMsg("O nome da lista é obrigatório.");
       return;
     }
-    if (!m3uUrl.trim()) return;
 
     setIsLoading(true);
     setErrorMsg("");
     setSuccessData(null);
 
     try {
-      const res = await fetch("/api/upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          url: m3uUrl.trim(),
-          name: playlistName.trim()
-        }),
-      });
+      let res;
+      if (uploadMethod === "file") {
+        if (!file) {
+          throw new Error("Selecione um arquivo de lista M3U.");
+        }
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("name", playlistName.trim());
+
+        res = await fetch("/api/upload", {
+          method: "POST",
+          body: formData,
+        });
+      } else {
+        if (!m3uUrl.trim()) {
+          throw new Error("Cole o link completo da sua lista M3U.");
+        }
+        res = await fetch("/api/upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ 
+            url: m3uUrl.trim(),
+            name: playlistName.trim()
+          }),
+        });
+      }
 
       const data = await res.json();
       if (!res.ok) {
@@ -94,43 +112,6 @@ export default function Home() {
 
       setSuccessData(data);
       setM3uUrl("");
-      setPlaylistName("");
-      fetchUserLists(); // Reload the sync codes list
-    } catch (err) {
-      console.error(err);
-      setErrorMsg(err.message);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleFileUploadSubmit = async () => {
-    if (!playlistName.trim()) {
-      setErrorMsg("O nome da lista é obrigatório para fazer o upload.");
-      return;
-    }
-    if (!file) return;
-
-    setIsLoading(true);
-    setErrorMsg("");
-    setSuccessData(null);
-
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("name", playlistName.trim());
-
-      const res = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || "Erro ao fazer upload do arquivo.");
-      }
-
-      setSuccessData(data);
       setFile(null);
       setPlaylistName("");
       fetchUserLists(); // Reload the sync codes list
@@ -177,7 +158,7 @@ export default function Home() {
 
   return (
     <div className="flex-grow min-h-screen flex flex-col justify-between py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-3xl w-full mx-auto flex flex-col flex-grow justify-center">
+      <div className="max-w-xl w-full mx-auto flex flex-col flex-grow justify-center">
         
         {/* HEADER / BRAND */}
         <div className="text-center mb-8">
@@ -236,119 +217,106 @@ export default function Home() {
               </div>
             )}
 
-            {/* Input Options Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              
-              {/* Option A: Upload File */}
-              <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between">
-                <div className="flex flex-col text-left">
-                  <h3 className="text-base font-bold text-white">Opção A: Upload de Arquivo</h3>
-                  <p className="text-xs text-slate-500 mt-1 font-light leading-relaxed">
-                    Carregue seu arquivo local da lista M3U (normalmente baixado do seu painel IPTV).
-                  </p>
-                </div>
-
-                {/* Playlist Name Input */}
-                <div className="flex flex-col text-left mt-3">
-                  <label className="text-[10px] uppercase font-bold text-slate-500 mb-1">Nome da Lista (Obrigatório)</label>
-                  <input
-                    type="text"
-                    placeholder="Ex: Canais da Sala"
-                    value={playlistName}
-                    onChange={(e) => setPlaylistName(e.target.value)}
-                    required
-                    className="w-full px-4 py-2.5 bg-slate-950/60 border border-slate-850 rounded-xl text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500/50 transition-colors"
-                  />
-                </div>
-
-                {/* Drag and Drop Zone */}
-                <div
-                  onDragEnter={handleDrag}
-                  onDragOver={handleDrag}
-                  onDragLeave={handleDrag}
-                  onDrop={handleDrop}
-                  className={`mt-4 border-2 border-dashed rounded-xl p-4 flex flex-col items-center justify-center cursor-pointer transition-all duration-200
-                    ${dragActive ? 'border-sky-400 bg-sky-950/20' : 'border-slate-800 bg-slate-950/20 hover:border-slate-700'}`}
-                >
-                  <input
-                    type="file"
-                    accept=".m3u,.m3u8,.txt"
-                    onChange={handleFileChange}
-                    className="hidden"
-                    id="m3u-file-upload"
-                  />
-                  <label htmlFor="m3u-file-upload" className="cursor-pointer text-center flex flex-col items-center">
-                    <svg className="w-8 h-8 text-slate-500 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                    </svg>
-                    <span className="text-xs text-slate-400 font-medium">
-                      {file ? file.name : "Arraste ou selecione seu arquivo .m3u"}
-                    </span>
-                  </label>
-                </div>
-
-                {file && (
-                  <button
-                    onClick={handleFileUploadSubmit}
-                    disabled={isLoading || !playlistName.trim()}
-                    className="mt-4 w-full py-2.5 px-4 rounded-xl text-xs font-bold text-white bg-sky-500 hover:bg-sky-600 disabled:opacity-50 transition-colors"
-                  >
-                    {isLoading ? "Processando..." : "Enviar Arquivo"}
-                  </button>
-                )}
+            {/* Unified Upload Form Card */}
+            <form onSubmit={handleSubmit} className="bg-slate-900/40 border border-slate-800 rounded-2xl p-6 flex flex-col text-left">
+              <div className="flex flex-col mb-4">
+                <h3 className="text-lg font-bold text-white">Adicionar Lista M3U</h3>
+                <p className="text-xs text-slate-500 mt-1 font-light leading-relaxed">
+                  Envie sua lista M3U. Nós baixamos, filtramos e preparamos tudo para carregar na sua Smart TV sem travamentos.
+                </p>
               </div>
 
-              {/* Option B: Enter URL */}
-              <form onSubmit={handleUrlSubmit} className="bg-slate-900/40 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between text-left">
-                <div className="flex flex-col mb-2">
-                  <h3 className="text-base font-bold text-white">Opção B: URL da Lista M3U</h3>
-                  <p className="text-xs text-slate-500 mt-1 font-light leading-relaxed">
-                    Cole o link completo da sua lista M3U (fornecido pelo seu provedor). Nós baixaremos e processaremos diretamente na nuvem.
-                  </p>
-                </div>
+              {/* Playlist Name Input */}
+              <div className="flex flex-col mb-4">
+                <label className="text-[10px] uppercase font-bold text-slate-500 mb-1.5 tracking-wider">Nome da Lista (Obrigatório)</label>
+                <input
+                  type="text"
+                  placeholder="Ex: Canais da Sala, Minha Lista Principal..."
+                  value={playlistName}
+                  onChange={(e) => setPlaylistName(e.target.value)}
+                  required
+                  className="w-full px-4 py-2.5 bg-slate-950/60 border border-slate-800 rounded-xl text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500/50 transition-colors"
+                />
+              </div>
 
-                <div className="flex flex-col gap-3">
-                  
-                  {/* Playlist Name Input */}
-                  <div className="flex flex-col text-left">
-                    <label className="text-[10px] uppercase font-bold text-slate-500 mb-1">Nome da Lista (Obrigatório)</label>
-                    <input
-                      type="text"
-                      placeholder="Ex: Canais do Quarto"
-                      value={playlistName}
-                      onChange={(e) => setPlaylistName(e.target.value)}
-                      required
-                      className="w-full px-4 py-2.5 bg-slate-950/60 border border-slate-850 rounded-xl text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500/50 transition-colors"
-                    />
-                  </div>
-
-                  {/* URL Input */}
-                  <div className="flex flex-col text-left">
-                    <label className="text-[10px] uppercase font-bold text-slate-500 mb-1">URL da Lista</label>
-                    <input
-                      type="url"
-                      placeholder="http://seu-provedor.com/get.php?username=..."
-                      value={m3uUrl}
-                      onChange={(e) => setM3uUrl(e.target.value)}
-                      required
-                      className="w-full px-4 py-2.5 bg-slate-950/60 border border-slate-850 rounded-xl text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500/50 transition-colors"
-                    />
-                  </div>
-
+              {/* Radio Method Selector */}
+              <div className="flex flex-col mb-5">
+                <label className="text-[10px] uppercase font-bold text-slate-500 mb-2 tracking-wider">Método de Envio</label>
+                <div className="grid grid-cols-2 gap-2 bg-slate-950/40 border border-slate-850 p-1.5 rounded-xl">
                   <button
-                    type="submit"
-                    disabled={isLoading || !m3uUrl || !playlistName.trim()}
-                    className="w-full py-2.5 px-4 rounded-xl text-xs font-bold text-white bg-sky-500 hover:bg-sky-600 disabled:opacity-50 transition-colors"
+                    type="button"
+                    onClick={() => { setUploadMethod("file"); setM3uUrl(""); }}
+                    className={`py-2 text-xs font-bold rounded-lg transition-all ${uploadMethod === "file" ? 'bg-sky-500/10 text-sky-400 border border-sky-500/20 shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
                   >
-                    {isLoading ? "Processando..." : "Importar URL"}
+                    Arquivo .m3u
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setUploadMethod("url"); setFile(null); }}
+                    className={`py-2 text-xs font-bold rounded-lg transition-all ${uploadMethod === "url" ? 'bg-sky-500/10 text-sky-400 border border-sky-500/20 shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                  >
+                    Link / URL
                   </button>
                 </div>
-              </form>
+              </div>
 
-            </div>
+              {/* Conditional Inputs */}
+              {uploadMethod === "file" ? (
+                /* FILE DRAG AND DROP */
+                <div className="flex flex-col mb-4">
+                  <div
+                    onDragEnter={handleDrag}
+                    onDragOver={handleDrag}
+                    onDragLeave={handleDrag}
+                    onDrop={handleDrop}
+                    className={`border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center cursor-pointer transition-all duration-200
+                      ${dragActive ? 'border-sky-400 bg-sky-950/20' : 'border-slate-800 bg-slate-950/20 hover:border-slate-700'}`}
+                  >
+                    <input
+                      type="file"
+                      accept=".m3u,.m3u8,.txt"
+                      onChange={handleFileChange}
+                      className="hidden"
+                      id="m3u-file-upload"
+                    />
+                    <label htmlFor="m3u-file-upload" className="cursor-pointer text-center flex flex-col items-center w-full">
+                      <svg className="w-8 h-8 text-sky-500/80 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                      </svg>
+                      <span className="text-xs text-slate-300 font-medium">
+                        {file ? file.name : "Arraste ou clique para selecionar seu arquivo .m3u"}
+                      </span>
+                      {file && <span className="text-[10px] text-slate-500 mt-1 font-light">Tamanho: {(file.size / 1024 / 1024).toFixed(2)} MB</span>}
+                    </label>
+                  </div>
+                </div>
+              ) : (
+                /* URL INPUT */
+                <div className="flex flex-col mb-4">
+                  <label className="text-[10px] uppercase font-bold text-slate-500 mb-1.5 tracking-wider">URL da Lista</label>
+                  <input
+                    type="url"
+                    placeholder="http://seu-provedor.com/get.php?username=..."
+                    value={m3uUrl}
+                    onChange={(e) => setM3uUrl(e.target.value)}
+                    required
+                    className="w-full px-4 py-2.5 bg-slate-950/60 border border-slate-800 rounded-xl text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500/50 transition-colors"
+                  />
+                </div>
+              )}
+
+              {/* Submit Button */}
+              <button
+                type="submit"
+                disabled={isLoading || !playlistName.trim() || (uploadMethod === "file" ? !file : !m3uUrl.trim())}
+                className="w-full py-3 px-4 rounded-xl text-xs font-extrabold text-white bg-sky-500 hover:bg-sky-600 disabled:opacity-50 disabled:hover:bg-sky-500 transition-colors shadow-lg"
+              >
+                {isLoading ? "Processando e Sincronizando..." : "Enviar e Gerar Código"}
+              </button>
+            </form>
 
             {/* List of Sincronized Codes (Single line items) */}
-            <div className="flex flex-col text-left mt-6 bg-slate-900/20 border border-slate-800/60 rounded-2xl p-6">
+            <div className="flex flex-col text-left mt-2 bg-slate-900/20 border border-slate-800/60 rounded-2xl p-6">
               <h2 className="text-lg font-bold text-white mb-4">Lista de Códigos Ativos</h2>
               
               {userLists.length === 0 ? (
@@ -361,7 +329,8 @@ export default function Home() {
                       className="flex items-center justify-between py-3 px-4 bg-slate-950/60 border border-slate-850 rounded-xl hover:border-slate-700 transition-colors text-slate-200"
                     >
                       {/* Left: Playlist Name */}
-                      <div className="flex flex-col max-w-[200px] truncate">
+                      <div className="flex flex-col max-w-[150px] truncate">
+                        <span className="text-xs text-slate-500 font-light">Playlist #{userLists.length - index}</span>
                         <span className="text-sm font-bold text-white truncate" title={list.name}>{list.name || "Lista Sem Nome"}</span>
                       </div>
 
@@ -392,7 +361,7 @@ export default function Home() {
 
                       {/* Right: Code Highlight and Delete Button */}
                       <div className="flex items-center gap-3">
-                        <div className="bg-sky-950/40 border border-sky-900/30 text-sky-400 font-mono px-3 py-1 rounded-lg font-black text-sm tracking-wider select-all animate-pulse">
+                        <div className="bg-sky-950/40 border border-sky-900/30 text-sky-400 font-mono px-3 py-1 rounded-lg font-black text-sm tracking-wider select-all">
                           {list.code}
                         </div>
                         <button
