@@ -31,10 +31,13 @@ export async function POST(request) {
     let m3uText = "";
     const contentType = request.headers.get("content-type") || "";
 
+    let playlistName = "";
+
     // 2. Extract M3U content (Supports either file upload or remote URL fetch)
     if (contentType.includes("multipart/form-data")) {
       const formData = await request.formData();
       const file = formData.get("file");
+      playlistName = formData.get("name") || "";
       
       if (!file) {
         return NextResponse.json(
@@ -45,7 +48,8 @@ export async function POST(request) {
       m3uText = await file.text();
     } else if (contentType.includes("application/json")) {
       const body = await request.json();
-      const { url } = body;
+      const { url, name } = body;
+      playlistName = name || "";
       
       if (!url) {
         return NextResponse.json(
@@ -67,6 +71,13 @@ export async function POST(request) {
     } else {
       return NextResponse.json(
         { status: "error", message: "Unsupported Content-Type" },
+        { status: 400 }
+      );
+    }
+
+    if (!playlistName || !playlistName.trim()) {
+      return NextResponse.json(
+        { status: "error", message: "O nome da lista é obrigatório." },
         { status: 400 }
       );
     }
@@ -146,9 +157,14 @@ export async function POST(request) {
       .upsert({
         code: syncCode,
         user_email: userEmail,
+        name: playlistName.trim(),
         movies_url: moviesUrl,
         live_url: liveUrl,
         series_url: seriesUrl,
+        movies_count: parsed.counts.movies || 0,
+        series_count: parsed.counts.series || 0,
+        live_count: parsed.counts.live || 0,
+        episodes_count: parsed.counts.episodes || 0,
         created_at: new Date().toISOString()
       });
 
