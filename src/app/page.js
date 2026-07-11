@@ -14,6 +14,29 @@ export default function Home() {
   const [errorMsg, setErrorMsg] = useState("");
   const [successData, setSuccessData] = useState(null);
   const [userLists, setUserLists] = useState([]);
+  const [refreshingCode, setRefreshingCode] = useState(null);
+
+  const handleRefreshList = async (code) => {
+    setRefreshingCode(code);
+    setErrorMsg("");
+    setSuccessData(null);
+    try {
+      const res = await fetch(`/api/refresh-list?code=${code}`, {
+        method: "POST"
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || "Erro ao atualizar lista.");
+      }
+      await fetchUserLists();
+      alert(`Lista [${code}] atualizada com sucesso no servidor!`);
+    } catch (err) {
+      console.error(err);
+      alert(`Erro ao atualizar lista: ${err.message}`);
+    } finally {
+      setRefreshingCode(null);
+    }
+  };
 
   // Fetch active sync codes for the logged-in user
   const fetchUserLists = async () => {
@@ -326,55 +349,88 @@ export default function Home() {
                   {userLists.map((list, index) => (
                     <div 
                       key={list.code} 
-                      className="flex items-center justify-between py-3 px-4 bg-slate-950/60 border border-slate-850 rounded-xl hover:border-slate-700 transition-colors text-slate-200"
+                      className="flex flex-col gap-2 py-3.5 px-4 bg-slate-950/60 border border-slate-850 rounded-xl hover:border-slate-700 transition-colors text-slate-200"
                     >
-                      {/* Left: Playlist Name */}
-                      <div className="flex flex-col max-w-[150px] truncate">
-                        <span className="text-xs text-slate-500 font-light">Playlist #{userLists.length - index}</span>
-                        <span className="text-sm font-bold text-white truncate" title={list.name}>{list.name || "Lista Sem Nome"}</span>
+                      {/* Top Row: Name, Stats, Actions */}
+                      <div className="flex items-center justify-between w-full">
+                        {/* Left: Playlist Name */}
+                        <div className="flex flex-col max-w-[150px] truncate">
+                          <span className="text-xs text-slate-500 font-light">Playlist #{userLists.length - index}</span>
+                          <span className="text-sm font-bold text-white truncate" title={list.name}>{list.name || "Lista Sem Nome"}</span>
+                        </div>
+
+                        {/* Middle: Counts with Icons */}
+                        <div className="flex items-center gap-4 text-xs font-light text-slate-400">
+                          {/* Movies */}
+                          <div className="flex items-center" title="Filmes">
+                            <svg className="w-4 h-4 mr-1.5 text-sky-400 fill-current" viewBox="0 0 24 24">
+                              <path d="M18,4l2,3h-3l-2-3h-2l2,3h-3l-2-3H8l2,3H7L5,4H4A2,2 0 0,0 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V4H18M16,17H14V12H16V17M12,17H10V12H12V17M8,17H6V12H8V17Z" />
+                            </svg>
+                            <span>{list.movies_count || 0}</span>
+                          </div>
+                          {/* Series */}
+                          <div className="flex items-center" title="Séries">
+                            <svg className="w-4 h-4 mr-1.5 text-sky-400 fill-current" viewBox="0 0 24 24">
+                              <path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2M9 5h2v2H9V5m0 4h2v2H9V9m0 4h2v2H9v-2m6 7H9v-2h6v2m0-4h-2v-2h2v2m0-4h-2V9h2v2m0-4h-2V5h2v2z" />
+                            </svg>
+                            <span>{list.series_count || 0}</span>
+                          </div>
+                          {/* Live TV Channels */}
+                          <div className="flex items-center" title="Canais Ao Vivo">
+                            <svg className="w-4 h-4 mr-1.5 text-sky-400 fill-current" viewBox="0 0 24 24">
+                              <path d="M21,17A2,2 0 0,0 23,15V5A2,2 0 0,0 21,3H3A2,2 0 0,0 1,5V15A2,2 0 0,0 3,17H9L7.5,19.5L9,20.5L11,17.5H13L15,20.5L16.5,19.5L15,17H21M3,5H21V15H3V5Z" />
+                            </svg>
+                            <span>{list.live_count || 0}</span>
+                          </div>
+                        </div>
+
+                        {/* Right: Code Highlight and Delete Button */}
+                        <div className="flex items-center gap-3">
+                          <div className="bg-sky-950/40 border border-sky-900/30 text-sky-400 font-mono px-3 py-1 rounded-lg font-black text-sm tracking-wider select-all">
+                            {list.code}
+                          </div>
+                          {/* Refresh Button */}
+                          <button
+                            onClick={() => handleRefreshList(list.code)}
+                            disabled={!list.m3u_url}
+                            className="p-1.5 rounded-lg bg-slate-900 hover:bg-sky-950/50 text-slate-500 hover:text-sky-400 border border-slate-800 hover:border-sky-900/40 disabled:opacity-30 disabled:hover:bg-slate-900 disabled:hover:text-slate-500 disabled:hover:border-slate-800 transition-all duration-200"
+                            title={list.m3u_url ? "Atualizar lista a partir do link" : "Não é possível atualizar upload local"}
+                          >
+                            <svg className={`w-4 h-4 fill-current ${refreshingCode === list.code ? "animate-spin" : ""}`} viewBox="0 0 24 24">
+                              <path d="M19,12H22.38C22.07,15.89 19.06,19 15.25,19.82L14.41,18.06C17.27,17.43 19.39,15 19.84,12H19M12,1.75C16.92,1.75 21.05,5.16 22.09,9.75H18.71C17.82,7 15.17,5 12,5C8,5 4.67,8 4.14,12H1C1.56,6.3 6.27,1.75 12,1.75M12,19C14.83,19 17.17,17 17.86,14.25H21.14C20.33,18.84 16.5,22.25 12,22.25C6.27,22.25 1.56,17.7 1,12H4.14C4.67,16 8,19 12,19Z" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={() => handleDeleteList(list.code)}
+                            className="p-1.5 rounded-lg bg-slate-900 hover:bg-rose-950/50 text-slate-500 hover:text-rose-400 border border-slate-800 hover:border-rose-900/40 transition-all duration-200"
+                            title="Excluir código"
+                          >
+                            <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
+                              <path d="M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z" />
+                            </svg>
+                          </button>
+                        </div>
                       </div>
 
-                      {/* Middle: Counts with Icons */}
-                      <div className="flex items-center gap-4 text-xs font-light text-slate-400">
-                        {/* Movies */}
-                        <div className="flex items-center" title="Filmes">
-                          <svg className="w-4 h-4 mr-1.5 text-sky-400 fill-current" viewBox="0 0 24 24">
-                            <path d="M18,4l2,3h-3l-2-3h-2l2,3h-3l-2-3H8l2,3H7L5,4H4A2,2 0 0,0 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V4H18M16,17H14V12H16V17M12,17H10V12H12V17M8,17H6V12H8V17Z" />
-                          </svg>
-                          <span>{list.movies_count || 0}</span>
+                      {/* Bottom Row: URL & Dates */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-900/40 pt-2 text-[10px] text-slate-500 font-light select-none">
+                        <div className="truncate max-w-[280px] md:max-w-[420px]" title={list.m3u_url || "Arquivo Local"}>
+                          <span className="font-semibold text-slate-400 mr-1">Origem:</span>
+                          <span className="text-slate-500 font-mono truncate">{list.m3u_url || "Upload via Arquivo Local"}</span>
                         </div>
-                        {/* Series */}
-                        <div className="flex items-center" title="Séries">
-                          <svg className="w-4 h-4 mr-1.5 text-sky-400 fill-current" viewBox="0 0 24 24">
-                            <path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2M9 5h2v2H9V5m0 4h2v2H9V9m0 4h2v2H9v-2m6 7H9v-2h6v2m0-4h-2v-2h2v2m0-4h-2V9h2v2m0-4h-2V5h2v2z" />
-                          </svg>
-                          <span>{list.series_count || 0}</span>
-                        </div>
-                        {/* Live TV Channels */}
-                        <div className="flex items-center" title="Canais Ao Vivo">
-                          <svg className="w-4 h-4 mr-1.5 text-sky-400 fill-current" viewBox="0 0 24 24">
-                            <path d="M21,17A2,2 0 0,0 23,15V5A2,2 0 0,0 21,3H3A2,2 0 0,0 1,5V15A2,2 0 0,0 3,17H9L7.5,19.5L9,20.5L11,17.5H13L15,20.5L16.5,19.5L15,17H21M3,5H21V15H3V5Z" />
-                          </svg>
-                          <span>{list.live_count || 0}</span>
+                        <div className="flex items-center gap-3">
+                          <span>
+                            <span className="font-semibold text-slate-400 mr-1">Criado:</span>
+                            {new Date(list.created_at).toLocaleDateString()} {new Date(list.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                          {list.updated_at && (
+                            <span>
+                              <span className="font-semibold text-slate-400 mr-1">Atualizado:</span>
+                              {new Date(list.updated_at).toLocaleDateString()} {new Date(list.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          )}
                         </div>
                       </div>
-
-                      {/* Right: Code Highlight and Delete Button */}
-                      <div className="flex items-center gap-3">
-                        <div className="bg-sky-950/40 border border-sky-900/30 text-sky-400 font-mono px-3 py-1 rounded-lg font-black text-sm tracking-wider select-all">
-                          {list.code}
-                        </div>
-                        <button
-                          onClick={() => handleDeleteList(list.code)}
-                          className="p-1.5 rounded-lg bg-slate-900 hover:bg-rose-950/50 text-slate-500 hover:text-rose-400 border border-slate-800 hover:border-rose-900/40 transition-all duration-200"
-                          title="Excluir código"
-                        >
-                          <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
-                            <path d="M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z" />
-                          </svg>
-                        </button>
-                      </div>
-
                     </div>
                   ))}
                 </div>

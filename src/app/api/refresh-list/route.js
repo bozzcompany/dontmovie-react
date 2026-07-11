@@ -4,100 +4,73 @@ import { authOptions } from "../auth/[...nextauth]/route";
 import { supabase } from "@/lib/supabase";
 import { parseM3uText } from "@/lib/m3uParser";
 
-const SYNC_CODE_CHARS = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"; // No 0, O, 1, I to avoid remote control typing mistakes
-
-function generateSyncCode() {
-  let code = "";
-  for (let i = 0; i < 4; i++) {
-    code += SYNC_CODE_CHARS.charAt(Math.floor(Math.random() * SYNC_CODE_CHARS.length));
-  }
-  return code;
+function normalizeLogoUrl(url) {
+  if (!url) return "";
+  return url.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/$/, "");
 }
 
 export async function POST(request) {
-  // 1. Authenticate user session
   const session = await getServerSession(authOptions);
   if (!session || !session.user) {
     return NextResponse.json(
-      { status: "error", message: "Unauthorized. Please login first." },
+      { status: "error", message: "Unauthorized" },
       { status: 401 }
     );
   }
 
-  const userId = session.user.id || session.user.email.replace(/[^a-zA-Z0-9]/g, "_");
+  const { searchParams } = new URL(request.url);
+  const code = searchParams.get("code");
+
+  if (!code) {
+    return NextResponse.json(
+      { status: "error", message: "Missing list code parameter" },
+      { status: 400 }
+    );
+  }
+
+  const normalizedCode = code.trim().toUpperCase();
   const userEmail = session.user.email;
+  const userId = session.user.id || session.user.email.replace(/[^a-zA-Z0-9]/g, "_");
 
   try {
-    let m3uText = "";
-    let originalUrl = null;
-    const contentType = request.headers.get("content-type") || "";
+    // 1. Fetch current sync code data from DB
+    const { data: listData, error: fetchErr } = await supabase
+      .from("sync_codes")
+      .select("*")
+      .eq("code", normalizedCode)
+      .eq("user_email", userEmail)
+      .single();
 
-    let playlistName = "";
-
-    // 2. Extract M3U content (Supports either file upload or remote URL fetch)
-    if (contentType.includes("multipart/form-data")) {
-      const formData = await request.formData();
-      const file = formData.get("file");
-      playlistName = formData.get("name") || "";
-      
-      if (!file) {
-        return NextResponse.json(
-          { status: "error", message: "No file was uploaded" },
-          { status: 400 }
-        );
-      }
-      m3uText = await file.text();
-    } else if (contentType.includes("application/json")) {
-      const body = await request.json();
-      const { url, name } = body;
-      playlistName = name || "";
-      originalUrl = url;
-      
-      if (!url) {
-        return NextResponse.json(
-          { status: "error", message: "Missing playlist URL" },
-          { status: 400 }
-        );
-      }
-
-      // Fetch the remote M3U file
-      console.log(`[Upload API] Fetching M3U playlist from: ${url}`);
-      const res = await fetch(url);
-      if (!res.ok) {
-        return NextResponse.json(
-          { status: "error", message: `Failed to fetch remote playlist. HTTP status: ${res.status}` },
-          { status: 400 }
-        );
-      }
-      m3uText = await res.text();
-    } else {
+    if (fetchErr || !listData) {
       return NextResponse.json(
-        { status: "error", message: "Unsupported Content-Type" },
+        { status: "error", message: "List not found or not owned by you." },
+        { status: 404 }
+      );
+    }
+
+    if (!listData.m3u_url) {
+      return NextResponse.json(
+        { status: "error", message: "Não é possível atualizar listas enviadas por arquivo local." },
         { status: 400 }
       );
     }
 
-    if (!playlistName || !playlistName.trim()) {
+    // 2. Fetch the remote M3U URL content
+    console.log(`[Refresh API] Re-fetching M3U playlist from: ${listData.m3u_url}`);
+    const res = await fetch(listData.m3u_url);
+    if (!res.ok) {
       return NextResponse.json(
-        { status: "error", message: "O nome da lista é obrigatório." },
+        { status: "error", message: `Erro ao baixar a lista M3U. Status HTTP: ${res.status}` },
         { status: 400 }
       );
     }
+    const m3uText = await res.text();
 
-    if (!m3uText || !m3uText.trim().startsWith("#EXTM3U")) {
-      return NextResponse.json(
-        { status: "error", message: "Invalid M3U file format. Must start with #EXTM3U" },
-        { status: 400 }
-      );
-    }
-
-    // 3. Parse list on high-performance serverless environment
-    console.log(`[Upload API] Starting parsing of list. Size: ${m3uText.length} chars.`);
+    // 3. Parse M3U
     const parsed = parseM3uText(m3uText);
-    console.log(`[Upload API] Parsing complete. Counts:`, parsed.counts);
 
-    // 4. Upload movies.txt, live.json, series.json to Supabase Storage
-    const storage = supabase.storage.from("iptv-files");
+    // 4. Initialize storage client
+    const storage = supabase.storage.from("playlists");
 
     // Upload movies.txt
     const { error: moviesErr } = await storage.upload(
@@ -115,7 +88,7 @@ export async function POST(request) {
     );
     if (liveErr) throw new Error(`Failed to upload live.json: ${liveErr.message}`);
 
-    // Create lightweight series list (exclude seasons/episodes to save memory/storage on TV)
+    // Create lightweight series list
     const seriesListObj = {};
     for (const key in parsed.seriesObj) {
       seriesListObj[key] = {
@@ -125,7 +98,7 @@ export async function POST(request) {
       };
     }
 
-    // Upload series.json (lightweight list of series)
+    // Upload series.json (lightweight index list)
     const { error: seriesErr } = await storage.upload(
       `${userId}/series.json`,
       Buffer.from(JSON.stringify(seriesListObj, null, 2), "utf-8"),
@@ -188,68 +161,28 @@ export async function POST(request) {
     );
     if (metadataErr) throw new Error(`Failed to upload metadata.json: ${metadataErr.message}`);
 
-    // Get Public URLs
-    const moviesUrl = storage.getPublicUrl(`${userId}/movies.txt`).data.publicUrl;
-    const liveUrl = storage.getPublicUrl(`${userId}/live.json`).data.publicUrl;
-    const seriesUrl = storage.getPublicUrl(`${userId}/series.json`).data.publicUrl;
-
-    // 5. Generate a unique 4-character sync code
-    let syncCode = "";
-    let codeIsUnique = false;
-    let attempts = 0;
-
-    while (!codeIsUnique && attempts < 15) {
-      attempts++;
-      const candidateCode = generateSyncCode();
-      
-      const { data } = await supabase
-        .from("sync_codes")
-        .select("code")
-        .eq("code", candidateCode)
-        .maybeSingle();
-
-      if (!data) {
-        syncCode = candidateCode;
-        codeIsUnique = true;
-      }
-    }
-
-    if (!syncCode) {
-      throw new Error("Failed to generate a unique synchronization code after multiple attempts.");
-    }
-
-    // 6. Write code registration to Supabase database sync_codes table
-    const { error: dbErr } = await supabase
+    // 5. Update counts and updated_at in Supabase DB sync_codes table
+    const { error: updateErr } = await supabase
       .from("sync_codes")
-      .upsert({
-        code: syncCode,
-        user_email: userEmail,
-        name: playlistName.trim(),
-        movies_url: moviesUrl,
-        live_url: liveUrl,
-        series_url: seriesUrl,
+      .update({
         movies_count: parsed.counts.movies || 0,
         series_count: parsed.counts.series || 0,
         live_count: parsed.counts.live || 0,
         episodes_count: parsed.counts.episodes || 0,
-        m3u_url: originalUrl ? originalUrl.trim() : null,
-        updated_at: new Date().toISOString(),
-        created_at: new Date().toISOString()
-      });
+        updated_at: new Date().toISOString()
+      })
+      .eq("code", normalizedCode);
 
-    if (dbErr) {
-      throw new Error(`Database upsert error: ${dbErr.message}`);
-    }
+    if (updateErr) throw new Error(`Failed to update DB counts: ${updateErr.message}`);
 
-    // 7. Return success and code
     return NextResponse.json({
       status: "success",
-      code: syncCode,
+      message: "Lista atualizada com sucesso no servidor!",
       counts: parsed.counts
     });
 
   } catch (err) {
-    console.error("[Upload API] Server Error:", err);
+    console.error("[Refresh API] Server Error:", err);
     return NextResponse.json(
       { status: "error", message: err.message || "Internal server error" },
       { status: 500 }

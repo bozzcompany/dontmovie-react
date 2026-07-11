@@ -17,7 +17,7 @@ export async function GET() {
   try {
     const { data, error } = await supabase
       .from("sync_codes")
-      .select("code, name, movies_url, live_url, series_url, movies_count, series_count, live_count, episodes_count, created_at")
+      .select("code, name, movies_url, live_url, series_url, movies_count, series_count, live_count, episodes_count, created_at, m3u_url, updated_at")
       .eq("user_email", userEmail)
       .order("created_at", { ascending: false });
 

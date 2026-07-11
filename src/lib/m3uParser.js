@@ -22,24 +22,34 @@ function classifyType(url, category) {
   const lowercaseUrl = url.toLowerCase();
   const lowercaseCategory = (category || "").toLowerCase();
 
-  // If group-title contains series/séries or url contains /series/ -> series
-  if (lowercaseCategory.includes("série") || lowercaseCategory.includes("series") || lowercaseUrl.includes("/series/")) {
+  // 1. Identify VOD file formats (extensions)
+  const isVODFile = 
+    lowercaseUrl.endsWith(".mp4") || 
+    lowercaseUrl.endsWith(".mkv") || 
+    lowercaseUrl.endsWith(".avi") ||
+    lowercaseUrl.endsWith(".webm") ||
+    lowercaseUrl.endsWith(".m4v");
+
+  // 2. Identify VOD keywords in the URL path (since path segments are explicit)
+  const isVODPath = 
+    lowercaseUrl.includes("/movie/") || 
+    lowercaseUrl.includes("/series/");
+
+  // Rule: If it is neither a VOD file extension nor a VOD path, it is a live channel!
+  if (!isVODFile && !isVODPath) {
+    return "live";
+  }
+
+  // 3. Distinguish between VOD series and movies
+  if (
+    lowercaseCategory.includes("série") || 
+    lowercaseCategory.includes("series") || 
+    lowercaseUrl.includes("/series/")
+  ) {
     return "series";
   }
-  // If group-title contains movies/filmes or video formats -> movie
-  if (
-    lowercaseCategory.includes("filme") ||
-    lowercaseCategory.includes("movie") ||
-    lowercaseCategory.includes("cinema") ||
-    lowercaseUrl.includes("/movie/") ||
-    lowercaseUrl.endsWith(".mp4") ||
-    lowercaseUrl.endsWith(".mkv") ||
-    lowercaseUrl.endsWith(".avi")
-  ) {
-    return "movie";
-  }
-  // Otherwise -> live channel
-  return "live";
+
+  return "movie";
 }
 
 function parseSeriesEpisode(title, category) {
@@ -162,7 +172,7 @@ export function parseM3uText(m3uText) {
               name: seriesName,
               logo: currentMeta.logo || "",
               category: currentMeta.category,
-              seasons: {}
+              episodes: [] // Storing flat array for sequence healing
             });
           }
           
@@ -171,14 +181,12 @@ export function parseM3uText(m3uText) {
             seriesObj.logo = currentMeta.logo;
           }
           
-          if (!seriesObj.seasons[parsed.season]) {
-            seriesObj.seasons[parsed.season] = [];
-          }
-          
-          seriesObj.seasons[parsed.season].push({
+          seriesObj.episodes.push({
+            season: parsed.season,
             episode: parsed.episode,
             name: parsed.episodeTitle,
-            url: trimmedLine
+            url: trimmedLine,
+            seriesName: seriesName // Store for title reconstruction
           });
           seriesCount++;
         } else if (type === "movie") {
@@ -203,7 +211,7 @@ export function parseM3uText(m3uText) {
 
   // Helper to count total episodes
   function totalEpisodes(s) {
-    return Object.values(s.seasons).reduce((acc, curr) => acc + curr.length, 0);
+    return s.episodes.length;
   }
 
   // Sort series entries by total episode count descending
@@ -212,6 +220,53 @@ export function parseM3uText(m3uText) {
   const groupedSeriesMap = new Map();
 
   for (const series of seriesEntries) {
+    // Sequence Healing Algorithm on flat chronological episodes array
+    const eps = series.episodes;
+    for (let i = 1; i < eps.length - 1; i++) {
+      const prev = eps[i-1];
+      const curr = eps[i];
+      const next = eps[i+1];
+
+      const prevS = parseInt(prev.season, 10);
+      const nextS = parseInt(next.season, 10);
+
+      const prevEp = parseInt(prev.episode, 10);
+      const nextEp = parseInt(next.episode, 10);
+
+      if (!isNaN(prevS) && !isNaN(nextS) && prevS === nextS) {
+        let changed = false;
+
+        // Season Interpolation
+        if (curr.season !== prev.season) {
+          curr.season = prev.season;
+          changed = true;
+        }
+
+        // Episode Interpolation
+        if (!isNaN(prevEp) && !isNaN(nextEp) && nextEp - prevEp === 2) {
+          curr.episode = prevEp + 1;
+          changed = true;
+        }
+
+        if (changed) {
+          curr.name = `${curr.seriesName} - Temp ${curr.season} Ep ${curr.episode}`;
+        }
+      }
+    }
+
+    // Populate seasons object from healed episodes array
+    series.seasons = {};
+    for (const ep of eps) {
+      if (!series.seasons[ep.season]) {
+        series.seasons[ep.season] = [];
+      }
+      series.seasons[ep.season].push({
+        episode: ep.episode,
+        name: ep.name,
+        url: ep.url
+      });
+    }
+
     let baseName = series.name
       .replace(/\s*[([{\s-]*\b(19\d\d|20\d\d)\b[)\]}\s-]*/g, "")
       .replace(/\s*[-:]?\s*\b(temporada|temp|t|season)\b\s*[\.]?\s*\d+/i, "")
