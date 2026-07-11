@@ -113,13 +113,78 @@ export async function POST(request) {
     );
     if (liveErr) throw new Error(`Failed to upload live.json: ${liveErr.message}`);
 
-    // Upload series.json
+    // Create lightweight series list (exclude seasons/episodes to save memory/storage on TV)
+    const seriesListObj = {};
+    for (const key in parsed.seriesObj) {
+      seriesListObj[key] = {
+        name: parsed.seriesObj[key].name,
+        logo: parsed.seriesObj[key].logo,
+        category: parsed.seriesObj[key].category
+      };
+    }
+
+    // Upload series.json (lightweight list of series)
     const { error: seriesErr } = await storage.upload(
       `${userId}/series.json`,
-      Buffer.from(JSON.stringify(parsed.seriesObj, null, 2), "utf-8"),
+      Buffer.from(JSON.stringify(seriesListObj, null, 2), "utf-8"),
       { contentType: "application/json; charset=utf-8", upsert: true }
     );
     if (seriesErr) throw new Error(`Failed to upload series.json: ${seriesErr.message}`);
+
+    // Upload series_details.json (full detailed series seasons & episodes data for on-demand fetch)
+    const { error: seriesDetailsErr } = await storage.upload(
+      `${userId}/series_details.json`,
+      Buffer.from(JSON.stringify(parsed.seriesObj, null, 2), "utf-8"),
+      { contentType: "application/json; charset=utf-8", upsert: true }
+    );
+    if (seriesDetailsErr) throw new Error(`Failed to upload series_details.json: ${seriesDetailsErr.message}`);
+
+    // Generate metadata.json containing category stats and counts
+    const movieCategoryMap = {};
+    const movieLines = parsed.moviesText.split("\n");
+    for (let i = 0; i < movieLines.length; i++) {
+      const line = movieLines[i].trim();
+      if (line.startsWith("#EXTINF:")) {
+        const groupMatch = line.match(/group-title="([^"]*)"/i);
+        const category = groupMatch ? groupMatch[1].trim() : "Filmes";
+        movieCategoryMap[category] = (movieCategoryMap[category] || 0) + 1;
+      }
+    }
+    const movieCategories = Object.keys(movieCategoryMap).map(name => ({
+      name,
+      count: movieCategoryMap[name]
+    })).sort((a, b) => b.count - a.count);
+
+    const seriesCategoryMap = {};
+    for (const key in parsed.seriesObj) {
+      const series = parsed.seriesObj[key];
+      const category = series.category || "Séries";
+      seriesCategoryMap[category] = (seriesCategoryMap[category] || 0) + 1;
+    }
+    const seriesCategories = Object.keys(seriesCategoryMap).map(name => ({
+      name,
+      count: seriesCategoryMap[name]
+    })).sort((a, b) => b.count - a.count);
+
+    const liveCategories = Object.keys(parsed.liveObj).map(name => ({
+      name,
+      count: parsed.liveObj[name].length
+    })).sort((a, b) => b.count - a.count);
+
+    const metadataObj = {
+      live: liveCategories,
+      movies: movieCategories,
+      series: seriesCategories,
+      counts: parsed.counts
+    };
+
+    // Upload metadata.json
+    const { error: metadataErr } = await storage.upload(
+      `${userId}/metadata.json`,
+      Buffer.from(JSON.stringify(metadataObj, null, 2), "utf-8"),
+      { contentType: "application/json; charset=utf-8", upsert: true }
+    );
+    if (metadataErr) throw new Error(`Failed to upload metadata.json: ${metadataErr.message}`);
 
     // Get Public URLs
     const moviesUrl = storage.getPublicUrl(`${userId}/movies.txt`).data.publicUrl;

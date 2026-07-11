@@ -2,10 +2,16 @@
 // Mirroring the exact clean-name grouping and regex classification from Tizen TV Svelte client
 
 const s00e00Regex = /s(\d+)\s*e(\d+)/i;
+const s00s00Regex = /s(\d+)\s*s(\d+)/i; // Handling S05S03 typo format
 const tempWordEpRegex = /(?:temporada|temp|t|season)\s*(\d+)\s*(?:episodio|ep|e)\s*(\d+)/i;
 const tempDashEpRegex = /\b(\d+)\x(\d+)\b/i;
-const epSuffixRegex = /(?:episodio|ep|e)\s*(\d+)/i;
-const tempSuffixRegex = /(?:temporada|temp|t|season)\s*(\d+)/i;
+const epSuffixRegex = /\b(?:episodio|ep|e)\s*[\.]?\s*(\d+)\b/i; // Added boundaries and dot
+const tempSuffixRegex = /\b(?:temporada|temp|t|season|s)\s*[\.]?\s*(\d+)\b/i; // Added "s" and boundaries
+
+function normalizeLogoUrl(url) {
+  if (!url) return "";
+  return url.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/$/, "");
+}
 
 function extractAttr(line, attrName) {
   const match = line.match(new RegExp(`${attrName}="([^"]*)"`, 'i'));
@@ -49,31 +55,39 @@ function parseSeriesEpisode(title, category) {
     episode = parseInt(match[2], 10);
     name = name.replace(s00e00Regex, "").trim();
   } else {
-    // 2. Check "Temporada 1 Ep 2" format
-    match = name.match(tempWordEpRegex);
+    // 1b. Check S01S02 typo format
+    match = name.match(s00s00Regex);
     if (match) {
       season = parseInt(match[1], 10).toString();
       episode = parseInt(match[2], 10);
-      name = name.replace(tempWordEpRegex, "").trim();
+      name = name.replace(s00s00Regex, "").trim();
     } else {
-      // 3. Check "1x02" format
-      match = name.match(tempDashEpRegex);
+      // 2. Check "Temporada 1 Ep 2" format
+      match = name.match(tempWordEpRegex);
       if (match) {
         season = parseInt(match[1], 10).toString();
         episode = parseInt(match[2], 10);
-        name = name.replace(tempDashEpRegex, "").trim();
+        name = name.replace(tempWordEpRegex, "").trim();
       } else {
-        // 4. Try parsing episode suffix alone (default to Season 1)
-        match = name.match(epSuffixRegex);
-        if (match) {
-          episode = parseInt(match[1], 10);
-          name = name.replace(epSuffixRegex, "").trim();
-        }
-        // Try parsing season suffix alone
-        match = name.match(tempSuffixRegex);
+        // 3. Check "1x02" format
+        match = name.match(tempDashEpRegex);
         if (match) {
           season = parseInt(match[1], 10).toString();
-          name = name.replace(tempSuffixRegex, "").trim();
+          episode = parseInt(match[2], 10);
+          name = name.replace(tempDashEpRegex, "").trim();
+        } else {
+          // 4. Try parsing episode suffix alone (default to Season 1)
+          match = name.match(epSuffixRegex);
+          if (match) {
+            episode = parseInt(match[1], 10);
+            name = name.replace(epSuffixRegex, "").trim();
+          }
+          // Try parsing season suffix alone
+          match = name.match(tempSuffixRegex);
+          if (match) {
+            season = parseInt(match[1], 10).toString();
+            name = name.replace(tempSuffixRegex, "").trim();
+          }
         }
       }
     }
@@ -85,7 +99,14 @@ function parseSeriesEpisode(title, category) {
     .replace(/\s+-\s*$/, "") // Trailing dashes
     .trim();
 
-  episodeTitle = `${name} - Temp ${season} Ep ${episode}`;
+  const parsedSeasonNum = parseInt(season, 10);
+  if (!isNaN(parsedSeasonNum) && parsedSeasonNum > 20) {
+    season = "Especiais";
+  }
+
+  episodeTitle = season === "Especiais"
+    ? `${name} - Ep ${episode} (Especiais / Perdidos)`
+    : `${name} - Temp ${season} Ep ${episode}`;
 
   return {
     seriesName: name,
@@ -180,58 +201,120 @@ export function parseM3uText(m3uText) {
     }
   }
 
-  // Group series by base name in post-processing loop (like the Svelte parser)
+  // Helper to count total episodes
+  function totalEpisodes(s) {
+    return Object.values(s.seasons).reduce((acc, curr) => acc + curr.length, 0);
+  }
+
+  // Sort series entries by total episode count descending
+  // This guarantees that main series items are processed first and duplicates are merged into them
+  const seriesEntries = Array.from(seriesMap.values()).sort((a, b) => totalEpisodes(b) - totalEpisodes(a));
   const groupedSeriesMap = new Map();
 
-  for (const [name, series] of seriesMap.entries()) {
-    let baseName = name
+  for (const series of seriesEntries) {
+    let baseName = series.name
       .replace(/\s*[([{\s-]*\b(19\d\d|20\d\d)\b[)\]}\s-]*/g, "")
       .replace(/\s*[-:]?\s*\b(temporada|temp|t|season)\b\s*[\.]?\s*\d+/i, "")
       .replace(/\s*[-:]?\s*\bs\s*[\.]?\s*\d+/i, "")
       .replace(/\s*[-:]?\s*\d+\s*(?:ª|ª\s*|\s*)\b(temporada|temp|t|season)\b/i, "")
       .replace(/\s*[-:]?\s*\d+\s*(?:ª|ª\s*|\s*)\bs\b/i, "")
+      .replace(/\s*[-:]?\s*\b(ep|e|episodio|cap|capitulo)\b\s*[\.]?\s*\d+/i, "") // Clean trailing episodes
+      .replace(/\s*[-:]\s*\d+\s*$/g, "") // Clean trailing dash + numbers
       .replace(/\s*[-:]\s*$/g, "")
       .trim();
 
     if (!baseName) {
-      baseName = name.trim();
+      baseName = series.name.trim();
     }
 
     let detectedSeason = null;
-    const seasonMatch = name.match(/\b(?:temporada|temp|t|season)\b\s*[\.]?\s*(\d+)/i) || name.match(/\bs\s*[\.]?\s*(\d+)/i);
+    const seasonMatch = series.name.match(/\b(?:temporada|temp|t|season)\b\s*[\.]?\s*(\d+)/i) || series.name.match(/\bs\s*[\.]?\s*(\d+)/i);
     if (seasonMatch) {
       detectedSeason = parseInt(seasonMatch[1], 10).toString();
     }
 
-    if (!groupedSeriesMap.has(baseName)) {
+    let existingKey = null;
+    for (const [existingName, existingSeries] of groupedSeriesMap.entries()) {
+      const normLogo1 = normalizeLogoUrl(series.logo);
+      const normLogo2 = normalizeLogoUrl(existingSeries.logo);
+      const sameLogo = normLogo1 && normLogo2 && normLogo1 === normLogo2;
+      const sameCategory = series.category === existingSeries.category;
+
+      if (sameCategory) {
+        const name1 = baseName.toLowerCase();
+        const name2 = existingName.toLowerCase();
+        const isPrefixMatch = (name1.startsWith(name2) || name2.startsWith(name1)) && Math.min(name1.length, name2.length) >= 6;
+
+        if (sameLogo || isPrefixMatch) {
+          existingKey = existingName;
+          break;
+        }
+      }
+    }
+
+    if (existingKey) {
+      const existingSeries = groupedSeriesMap.get(existingKey);
+      const shorterName = baseName.length < existingSeries.name.length ? baseName : existingSeries.name;
+      const duplicateEpsCount = totalEpisodes(series);
+
+      // If the duplicate entry has few episodes (e.g., stray episode typos), group them into Especiais
+      if (duplicateEpsCount <= 3) {
+        if (!existingSeries.seasons["Especiais"]) {
+          existingSeries.seasons["Especiais"] = [];
+        }
+        for (const seasonNum in series.seasons) {
+          for (const ep of series.seasons[seasonNum]) {
+            if (!existingSeries.seasons["Especiais"].some(e => e.url === ep.url)) {
+              existingSeries.seasons["Especiais"].push({
+                ...ep,
+                name: `${ep.name} (Perdido / Extra)`
+              });
+            }
+          }
+        }
+      } else {
+        // Otherwise merge seasons normally
+        for (const seasonNum in series.seasons) {
+          let targetSeasonNum = seasonNum;
+          if (seasonNum === "1" && detectedSeason && detectedSeason !== "1") {
+            targetSeasonNum = detectedSeason;
+          }
+
+          if (!existingSeries.seasons[targetSeasonNum]) {
+            existingSeries.seasons[targetSeasonNum] = [];
+          }
+
+          for (const ep of series.seasons[seasonNum]) {
+            if (!existingSeries.seasons[targetSeasonNum].some(existingEp => existingEp.url === ep.url)) {
+              existingSeries.seasons[targetSeasonNum].push(ep);
+            }
+          }
+        }
+      }
+
+      // Rename key if shorter name is different
+      if (shorterName !== existingKey) {
+        existingSeries.name = shorterName;
+        groupedSeriesMap.delete(existingKey);
+        groupedSeriesMap.set(shorterName, existingSeries);
+      }
+    } else {
+      // Deep copy seasons to avoid mutation issues
+      const mappedSeasons = {};
+      for (const seasonNum in series.seasons) {
+        let targetSeasonNum = seasonNum;
+        if (seasonNum === "1" && detectedSeason && detectedSeason !== "1") {
+          targetSeasonNum = detectedSeason;
+        }
+        mappedSeasons[targetSeasonNum] = JSON.parse(JSON.stringify(series.seasons[seasonNum]));
+      }
+
       groupedSeriesMap.set(baseName, {
         name: baseName,
         logo: series.logo || "",
         category: series.category,
-        seasons: {}
+        seasons: mappedSeasons
       });
-    }
-
-    const groupedSeries = groupedSeriesMap.get(baseName);
-    if (!groupedSeries.logo && series.logo) {
-      groupedSeries.logo = series.logo;
-    }
-
-    for (const seasonNum in series.seasons) {
-      let targetSeasonNum = seasonNum;
-      if (seasonNum === "1" && detectedSeason && detectedSeason !== "1") {
-        targetSeasonNum = detectedSeason;
-      }
-
-      if (!groupedSeries.seasons[targetSeasonNum]) {
-        groupedSeries.seasons[targetSeasonNum] = [];
-      }
-
-      for (const ep of series.seasons[seasonNum]) {
-        if (!groupedSeries.seasons[targetSeasonNum].some(existingEp => existingEp.url === ep.url)) {
-          groupedSeries.seasons[targetSeasonNum].push(ep);
-        }
-      }
     }
   }
 
