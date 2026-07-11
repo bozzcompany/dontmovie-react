@@ -2,11 +2,12 @@
 // Mirroring the exact clean-name grouping and regex classification from Tizen TV Svelte client
 
 const s00e00Regex = /s(\d+)\s*e(\d+)/i;
-const s00s00Regex = /s(\d+)\s*s(\d+)/i; // Handling S05S03 typo format
+const s00s00NoSpaceRegex = /s(\d+)s(\d+)/i; // Handling S05S03 typo format (no space)
+const s00s00Regex = /s(\d+)\s+s(\d+)/i; // Handling S05 S03 typo format (with space)
 const tempWordEpRegex = /(?:temporada|temp|t|season)\s*(\d+)\s*(?:episodio|ep|e)\s*(\d+)/i;
 const tempDashEpRegex = /\b(\d+)\x(\d+)\b/i;
-const epSuffixRegex = /\b(?:episodio|ep|e)\s*[\.]?\s*(\d+)\b/i; // Added boundaries and dot
-const tempSuffixRegex = /\b(?:temporada|temp|t|season|s)\s*[\.]?\s*(\d+)\b/i; // Added "s" and boundaries
+const epSuffixRegex = /\b(?:episodio|ep|e)\s*[\.]?\s*(\d+)\b/i;
+const tempSuffixRegex = /\b(?:temporada|temp|t|season|s)\s*[\.]?\s*(\d+)\b/i;
 
 function normalizeLogoUrl(url) {
   if (!url) return "";
@@ -65,38 +66,46 @@ function parseSeriesEpisode(title, category) {
     episode = parseInt(match[2], 10);
     name = name.replace(s00e00Regex, "").trim();
   } else {
-    // 1b. Check S01S02 typo format
-    match = name.match(s00s00Regex);
+    // 1b. Check S01S02 typo format (no space)
+    match = name.match(s00s00NoSpaceRegex);
     if (match) {
       season = parseInt(match[1], 10).toString();
       episode = parseInt(match[2], 10);
-      name = name.replace(s00s00Regex, "").trim();
+      name = name.replace(s00s00NoSpaceRegex, "").trim();
     } else {
-      // 2. Check "Temporada 1 Ep 2" format
-      match = name.match(tempWordEpRegex);
+      // 1c. Check S01S02 typo format (with space)
+      match = name.match(s00s00Regex);
       if (match) {
         season = parseInt(match[1], 10).toString();
         episode = parseInt(match[2], 10);
-        name = name.replace(tempWordEpRegex, "").trim();
+        name = name.replace(s00s00Regex, "").trim();
       } else {
-        // 3. Check "1x02" format
-        match = name.match(tempDashEpRegex);
+        // 2. Check "Temporada 1 Ep 2" format
+        match = name.match(tempWordEpRegex);
         if (match) {
           season = parseInt(match[1], 10).toString();
           episode = parseInt(match[2], 10);
-          name = name.replace(tempDashEpRegex, "").trim();
+          name = name.replace(tempWordEpRegex, "").trim();
         } else {
-          // 4. Try parsing episode suffix alone (default to Season 1)
-          match = name.match(epSuffixRegex);
-          if (match) {
-            episode = parseInt(match[1], 10);
-            name = name.replace(epSuffixRegex, "").trim();
-          }
-          // Try parsing season suffix alone
-          match = name.match(tempSuffixRegex);
+          // 3. Check "1x02" format
+          match = name.match(tempDashEpRegex);
           if (match) {
             season = parseInt(match[1], 10).toString();
-            name = name.replace(tempSuffixRegex, "").trim();
+            episode = parseInt(match[2], 10);
+            name = name.replace(tempDashEpRegex, "").trim();
+          } else {
+            // 4. Try parsing episode suffix alone (default to Season 1)
+            match = name.match(epSuffixRegex);
+            if (match) {
+              episode = parseInt(match[1], 10);
+              name = name.replace(epSuffixRegex, "").trim();
+            }
+            // Try parsing season suffix alone
+            match = name.match(tempSuffixRegex);
+            if (match) {
+              season = parseInt(match[1], 10).toString();
+              name = name.replace(tempSuffixRegex, "").trim();
+            }
           }
         }
       }
